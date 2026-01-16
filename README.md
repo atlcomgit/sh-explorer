@@ -17,3 +17,12 @@ Shell scripts explorer for VS Code.
 This extension contributes the following settings:
 
 - `sh-explorer.exclude`: Glob patterns to exclude folders/files from the list.
+
+Install extension:
+
+```bash
+ext install alek-fiend.sh-explorer
+```
+
+or visit page
+[https://marketplace.visualstudio.com/items?itemName=alek-fiend.sh-explorer](https://marketplace.visualstudio.com/items?itemName=alek-fiend.sh-explorer)

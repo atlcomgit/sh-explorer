@@ -3,14 +3,20 @@
   "publisher": "alek-fiend",
   "displayName": "sh-explorer",
   "description": "Sh explorer in workspace",
-  "version": "0.0.2",
+  "version": "0.0.6",
   "engines": {
     "vscode": "^1.108.0"
   },
   "categories": [
     "Other"
   ],
+  "icon": "resources/icon.png",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/atlcomgit/sh-explorer.git"
+  },
+  "homepage": "https://github.com/atlcomgit/sh-explorer",
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -59,7 +65,7 @@
       },
       {
         "command": "sh-explorer.refresh",
-        "title": "Sh scripts refresh",
+        "title": "Sh Explorer refresh",
         "icon": {
           "light": "resources/refresh.svg",
           "dark": "resources/refresh.svg"
@@ -70,7 +76,7 @@
       "explorer": [
         {
           "id": "sh-explorer.scripts",
-          "name": "Sh scripts",
+          "name": "Sh Explorer",
           "icon": "resources/sh.svg"
         }
       ]
