@@ -1,0 +1,138 @@
+{
+  "name": "sh-explorer",
+  "publisher": "alek-fiend",
+  "displayName": "sh-explorer",
+  "description": "Sh explorer in workspace",
+  "version": "0.0.2",
+  "engines": {
+    "vscode": "^1.108.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "license": "MIT",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Sh Explorer",
+      "properties": {
+        "sh-explorer.exclude": {
+          "type": "array",
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Glob patterns for files or folders to exclude from the shell scripts list."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "sh-explorer.runScript",
+        "title": "Run Shell Script",
+        "icon": {
+          "light": "resources/run.svg",
+          "dark": "resources/run.svg"
+        }
+      },
+      {
+        "command": "sh-explorer.openScript",
+        "title": "Open Shell Script",
+        "icon": {
+          "light": "resources/open.svg",
+          "dark": "resources/open.svg"
+        }
+      },
+      {
+        "command": "sh-explorer.toggleFavorite",
+        "title": "Toggle Favorite",
+        "icon": {
+          "light": "resources/star.svg",
+          "dark": "resources/star.svg"
+        }
+      },
+      {
+        "command": "sh-explorer.refresh",
+        "title": "Sh scripts refresh",
+        "icon": {
+          "light": "resources/refresh.svg",
+          "dark": "resources/refresh.svg"
+        }
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "sh-explorer.scripts",
+          "name": "Sh scripts",
+          "icon": "resources/sh.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "sh-explorer.refresh",
+          "when": "view == sh-explorer.scripts",
+          "group": "navigation",
+          "icon": "resources/refresh.svg"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sh-explorer.runScript",
+          "when": "view == sh-explorer.scripts && viewItem == sh-explorer.script",
+          "group": "inline@1",
+          "icon": "resources/run.svg"
+        },
+        {
+          "command": "sh-explorer.openScript",
+          "when": "view == sh-explorer.scripts && viewItem == sh-explorer.script",
+          "group": "inline@2",
+          "icon": "resources/open.svg"
+        },
+        {
+          "command": "sh-explorer.toggleFavorite",
+          "when": "view == sh-explorer.scripts && viewItem == sh-explorer.script",
+          "group": "inline@3",
+          "icon": "resources/star.svg"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "minimatch": "^9.0.5"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.108.1",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.52.0",
+    "eslint": "^9.39.2",
+    "esbuild": "^0.27.2",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
