@@ -18,7 +18,9 @@ This extension contributes the following settings:
 
 - `sh-explorer.exclude`: Glob patterns to exclude folders/files from the list.
 
-Install extension:
+## Requirements Install extension
+
+To install extension run command:
 
 ```bash
 ext install alek-fiend.sh-explorer

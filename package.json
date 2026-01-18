@@ -3,7 +3,7 @@
   "publisher": "alek-fiend",
   "displayName": "sh-explorer",
   "description": "Sh explorer in workspace",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "engines": {
     "vscode": "^1.108.0"
   },
