@@ -3,7 +3,7 @@
   "publisher": "alek-fiend",
   "displayName": "sh-explorer",
   "description": "Sh explorer in workspace",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "engines": {
     "vscode": "^1.108.0"
   },
@@ -35,6 +35,18 @@
             "type": "string"
           },
           "description": "Glob patterns for files or folders to exclude from the shell scripts list."
+        },
+        "sh-explorer.extensions": {
+          "type": "array",
+          "default": [
+            ".bat",
+            ".cmd",
+            ".sh"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "File extensions to include in the scripts list."
         }
       }
     },

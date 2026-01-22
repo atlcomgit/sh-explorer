@@ -63,12 +63,21 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 	private readonly nodeIndex = new Map<string, ScriptNode>();
 	private readonly itemCache = new Map<string, ScriptItem>();
 	private readonly getExcludeGlobs: () => string[];
+	private readonly getIncludeExtensions: () => string[];
 	private readonly favoriteKeys: Set<string>;
+	private refreshChain: Promise<string[]> = Promise.resolve([]);
+	private refreshToken = 0;
 
-	constructor(expandedKeys: Set<string>, favoriteKeys: Set<string>, getExcludeGlobs: () => string[]) {
+	constructor(
+		expandedKeys: Set<string>,
+		favoriteKeys: Set<string>,
+		getExcludeGlobs: () => string[],
+		getIncludeExtensions: () => string[]
+	) {
 		this.expandedKeys = expandedKeys;
 		this.favoriteKeys = favoriteKeys;
 		this.getExcludeGlobs = getExcludeGlobs;
+		this.getIncludeExtensions = getIncludeExtensions;
 	}
 
 	dispose(): void {
@@ -93,8 +102,10 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 			return;
 		}
 		const patterns = this.getNormalizedExcludeGlobs();
+		const extensions = this.getNormalizedExtensions();
 		const uris = paths
 			.map((entry) => vscode.Uri.file(entry))
+			.filter((uri) => this.isIncludedByExtension(uri, extensions))
 			.filter((uri) => !this.isExcluded(uri, patterns));
 		this.roots = this.buildTreeFromUris(uris, folders);
 		this.itemCache.clear();
@@ -102,18 +113,35 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 	}
 
 	async loadFromWorkspace(): Promise<string[]> {
-		const folders = vscode.workspace.workspaceFolders;
-		if (!folders || folders.length === 0) {
-			this.refresh();
-			return [];
-		}
-		const patterns = this.getNormalizedExcludeGlobs();
-		const excludePattern = patterns.length > 0 ? `{${patterns.join(',')}}` : undefined;
-		const files = await vscode.workspace.findFiles('**/*.sh', excludePattern);
-		this.roots = this.buildTreeFromUris(files, folders);
-		this.itemCache.clear();
-		this._onDidChangeTreeData.fire(undefined);
-		return files.map((entry) => entry.fsPath);
+		const token = ++this.refreshToken;
+		const task = async (): Promise<string[]> => {
+			const folders = vscode.workspace.workspaceFolders;
+			if (!folders || folders.length === 0) {
+				if (token === this.refreshToken) {
+					this.refresh();
+				}
+				return [];
+			}
+			const patterns = this.getNormalizedExcludeGlobs();
+			const excludePattern = patterns.length > 0 ? `{${patterns.join(',')}}` : undefined;
+			const includePattern = this.getIncludePattern();
+			if (!includePattern) {
+				if (token === this.refreshToken) {
+					this.refresh();
+				}
+				return [];
+			}
+			const files = await vscode.workspace.findFiles(includePattern, excludePattern);
+			if (token !== this.refreshToken) {
+				return [];
+			}
+			this.roots = this.buildTreeFromUris(files, folders);
+			this.itemCache.clear();
+			this._onDidChangeTreeData.fire(undefined);
+			return files.map((entry) => entry.fsPath);
+		};
+		this.refreshChain = this.refreshChain.then(task, task);
+		return this.refreshChain;
 	}
 
 	getTreeItem(element: ScriptItem): vscode.TreeItem {
@@ -155,6 +183,10 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 		return this.getOrCreateItem(node);
 	}
 
+	hasRoots(): boolean {
+		return this.roots.length > 0;
+	}
+
 	private getOrCreateItem(node: ScriptNode): ScriptItem {
 		const existing = this.itemCache.get(node.key);
 		if (existing) {
@@ -167,14 +199,39 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 
 
 	private async buildTree(): Promise<ScriptNode[]> {
-		const folders = vscode.workspace.workspaceFolders;
-		if (!folders || folders.length === 0) {
-			return [];
+		await this.loadFromWorkspace();
+		return this.roots;
+	}
+
+	private getNormalizedExtensions(): string[] {
+		return this.getIncludeExtensions()
+			.map((entry) => entry.trim())
+			.filter((entry) => entry.length > 0)
+			.map((entry) => (entry.startsWith('.') ? entry.slice(1) : entry))
+			.map((entry) => entry.replace(/^\.+/, ''))
+			.filter((entry) => entry.length > 0)
+			.filter((entry) => !entry.includes('*') && !entry.includes('?') && !entry.includes('['))
+			.filter((entry) => !entry.includes('/') && !entry.includes('\\'))
+			.map((entry) => entry.toLowerCase());
+	}
+
+	private getIncludePattern(): string | undefined {
+		const extensions = this.getNormalizedExtensions();
+		if (extensions.length === 0) {
+			return undefined;
 		}
-		const patterns = this.getNormalizedExcludeGlobs();
-		const excludePattern = patterns.length > 0 ? `{${patterns.join(',')}}` : undefined;
-		const files = await vscode.workspace.findFiles('**/*.sh', excludePattern);
-		return this.buildTreeFromUris(files, folders);
+		if (extensions.length === 1) {
+			return `**/*.${extensions[0]}`;
+		}
+		return `**/*.{${extensions.join(',')}}`;
+	}
+
+	private isIncludedByExtension(uri: vscode.Uri, extensions: string[]): boolean {
+		if (extensions.length === 0) {
+			return false;
+		}
+		const ext = path.extname(uri.fsPath).replace(/^\./, '').toLowerCase();
+		return extensions.includes(ext);
 	}
 
 	private getNormalizedExcludeGlobs(): string[] {
@@ -296,6 +353,12 @@ export function activate(context: vscode.ExtensionContext) {
 		return vscode.workspace.getConfiguration('sh-explorer').get<string[]>('exclude', []);
 	};
 
+	const getIncludeExtensions = (): string[] => {
+		return vscode.workspace
+			.getConfiguration('sh-explorer')
+			.get<string[]>('extensions', ['.bat', '.cmd', '.sh']);
+	};
+
 	const expandedKeys = new Set<string>(
 		context.workspaceState.get<string[]>(expandedStateKey, []).map(normalizeKey)
 	);
@@ -303,7 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const favoriteKeys = new Set<string>(
 		context.workspaceState.get<string[]>(favoritesKey, []).map(normalizeKey)
 	);
-	const provider = new ShScriptsProvider(expandedKeys, favoriteKeys, getExcludeGlobs);
+	const provider = new ShScriptsProvider(expandedKeys, favoriteKeys, getExcludeGlobs, getIncludeExtensions);
 	const treeView = vscode.window.createTreeView('sh-explorer.scripts', {
 		treeDataProvider: provider,
 		showCollapseAll: false
@@ -355,8 +418,11 @@ export function activate(context: vscode.ExtensionContext) {
 			currentKey = `${currentKey}::${segments[i]}`;
 			expandedKeys.add(currentKey);
 		}
-		provider.refresh();
-		await provider.ensureTree();
+		if (!provider.hasRoots()) {
+			await provider.ensureTree();
+		} else {
+			provider.refreshItems();
+		}
 		let restored = false;
 		const rootItem = provider.getItemByKey(rootKey);
 		if (rootItem) {
@@ -523,7 +589,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	const configListener = vscode.workspace.onDidChangeConfiguration((event) => {
-		if (event.affectsConfiguration('sh-explorer.exclude')) {
+		if (event.affectsConfiguration('sh-explorer.exclude') || event.affectsConfiguration('sh-explorer.extensions')) {
 			void refreshInBackground();
 		}
 	});
