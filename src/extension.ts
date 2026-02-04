@@ -367,13 +367,16 @@ export function activate(context: vscode.ExtensionContext) {
 		context.workspaceState.get<string[]>(favoritesKey, []).map(normalizeKey)
 	);
 	const provider = new ShScriptsProvider(expandedKeys, favoriteKeys, getExcludeGlobs, getIncludeExtensions);
+	const cachedScripts = context.workspaceState.get<string[]>(cachedScriptsKey, []);
+	const hasCachedScripts = cachedScripts.length > 0;
+	if (hasCachedScripts) {
+		provider.loadFromCachedPaths(cachedScripts);
+	}
 	const treeView = vscode.window.createTreeView('sh-explorer.scripts', {
 		treeDataProvider: provider,
 		showCollapseAll: false
 	});
 	let didRestoreSelection = false;
-	const cachedScripts = context.workspaceState.get<string[]>(cachedScriptsKey, []);
-	const hasCachedScripts = cachedScripts.length > 0;
 	const restoreFromCache = async () => {
 		if (!hasCachedScripts) {
 			return;
@@ -523,8 +526,13 @@ export function activate(context: vscode.ExtensionContext) {
 	};
 
 	const refreshCommand = vscode.commands.registerCommand('sh-explorer.refresh', async () => {
-		const paths = await provider.loadFromWorkspace();
-		await context.workspaceState.update(cachedScriptsKey, paths);
+		treeView.message = 'Обновление...';
+		try {
+			const paths = await provider.loadFromWorkspace();
+			await context.workspaceState.update(cachedScriptsKey, paths);
+		} finally {
+			treeView.message = undefined;
+		}
 	});
 
 	const runCommand = vscode.commands.registerCommand('sh-explorer.runScript', async (arg?: unknown) => {
@@ -615,8 +623,13 @@ export function activate(context: vscode.ExtensionContext) {
 	};
 
 	const refreshInBackground = async () => {
-		const paths = await provider.loadFromWorkspace();
-		await context.workspaceState.update(cachedScriptsKey, paths);
+		treeView.message = 'Обновление...';
+		try {
+			const paths = await provider.loadFromWorkspace();
+			await context.workspaceState.update(cachedScriptsKey, paths);
+		} finally {
+			treeView.message = undefined;
+		}
 	};
 
 	if (treeView.visible && !didRestoreSelection) {
@@ -625,7 +638,7 @@ export function activate(context: vscode.ExtensionContext) {
 	void restoreFromCache();
 	setTimeout(() => {
 		void refreshInBackground();
-	}, hasCachedScripts ? 800 : 0);
+	}, hasCachedScripts ? 200 : 0);
 
 	context.subscriptions.push(
 		provider,
