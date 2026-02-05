@@ -472,12 +472,15 @@ export function activate(context: vscode.ExtensionContext) {
 		void saveExpandedState();
 	});
 
-	let runTerminal: vscode.Terminal | undefined;
-	const terminalName = 'Sh Explorer: Script Run';
+	const terminalNamePrefix = 'Sh-Explorer';
+	const runTerminals = new Map<string, vscode.Terminal>();
 
 	const closeListener = vscode.window.onDidCloseTerminal((terminal) => {
-		if (terminal === runTerminal) {
-			runTerminal = undefined;
+		for (const [key, value] of runTerminals) {
+			if (value === terminal) {
+				runTerminals.delete(key);
+				break;
+			}
 		}
 	});
 
@@ -542,14 +545,19 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
+		const scriptKey = resolveScriptKey(arg) ?? uri.fsPath;
+
 		const folder = vscode.workspace.getWorkspaceFolder(uri);
 		const cwd = folder?.uri.fsPath;
+		let runTerminal = runTerminals.get(scriptKey);
 		if (!runTerminal) {
+			const terminalName = `${terminalNamePrefix}: ${path.basename(uri.fsPath)}`;
 			runTerminal = vscode.window.createTerminal({
 				name: terminalName,
 				cwd,
 				location: vscode.TerminalLocation.Editor
 			});
+			runTerminals.set(scriptKey, runTerminal);
 		} else if (cwd) {
 			runTerminal.sendText(`cd "${cwd}"`);
 		}
