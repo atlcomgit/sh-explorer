@@ -18,9 +18,14 @@ class ScriptItem extends vscode.TreeItem {
 	private readonly expandedKeys: ReadonlySet<string>;
 	private readonly favoriteKeys: ReadonlySet<string>;
 
-	constructor(node: ScriptNode, expandedKeys: ReadonlySet<string>, favoriteKeys: ReadonlySet<string>) {
+	constructor(
+		node: ScriptNode,
+		expandedKeys: ReadonlySet<string>,
+		favoriteKeys: ReadonlySet<string>,
+		displayLabel?: string
+	) {
 		super(
-			node.label,
+			displayLabel ?? node.label,
 			node.kind === 'file'
 				? vscode.TreeItemCollapsibleState.None
 				: expandedKeys.has(node.key)
@@ -149,7 +154,7 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 	}
 
 	getParent(element: ScriptItem): ScriptItem | undefined {
-		const parent = element.node.parent;
+		const parent = this.getVisibleParent(element.node);
 		if (!parent) {
 			return undefined;
 		}
@@ -163,8 +168,8 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 			}
 			return this.roots.map((node) => this.getOrCreateItem(node));
 		}
-
-		const children = Array.from(element.node.children.values());
+		const { tail } = this.getCompactInfo(element.node);
+		const children = Array.from(tail.children.values()).filter((node) => !this.isHiddenByCompaction(node));
 		children.sort((a, b) => a.label.localeCompare(b.label));
 		return children.map((node) => this.getOrCreateItem(node));
 	}
@@ -180,7 +185,8 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 		if (!node) {
 			return undefined;
 		}
-		return this.getOrCreateItem(node);
+		const visibleNode = this.getVisibleNode(node);
+		return this.getOrCreateItem(visibleNode);
 	}
 
 	hasRoots(): boolean {
@@ -192,9 +198,64 @@ class ShScriptsProvider implements vscode.TreeDataProvider<ScriptItem>, vscode.D
 		if (existing) {
 			return existing;
 		}
-		const created = new ScriptItem(node, this.expandedKeys, this.favoriteKeys);
+		const { label } = this.getCompactInfo(node);
+		const created = new ScriptItem(node, this.expandedKeys, this.favoriteKeys, label);
 		this.itemCache.set(node.key, created);
 		return created;
+	}
+
+	private isHiddenByCompaction(node: ScriptNode): boolean {
+		const parent = node.parent;
+		if (!parent) {
+			return false;
+		}
+		if (parent.kind !== 'folder') {
+			return false;
+		}
+		if (parent.children.size !== 1) {
+			return false;
+		}
+		const onlyChild = parent.children.values().next().value as ScriptNode | undefined;
+		return !!onlyChild && onlyChild.kind === 'folder';
+	}
+
+	private getVisibleParent(node: ScriptNode): ScriptNode | undefined {
+		let current = node.parent;
+		while (current && this.isHiddenByCompaction(current)) {
+			current = current.parent;
+		}
+		return current;
+	}
+
+	private getVisibleNode(node: ScriptNode): ScriptNode {
+		let current: ScriptNode = node;
+		while (this.isHiddenByCompaction(current)) {
+			if (!current.parent) {
+				return current;
+			}
+			current = current.parent;
+		}
+		return current;
+	}
+
+	private getCompactInfo(node: ScriptNode): { label: string; tail: ScriptNode } {
+		if (node.kind !== 'folder') {
+			return { label: node.label, tail: node };
+		}
+		let current = node;
+		const labels = [node.label];
+		while (current.kind === 'folder') {
+			if (current.children.size !== 1) {
+				break;
+			}
+			const onlyChild = current.children.values().next().value as ScriptNode | undefined;
+			if (!onlyChild || onlyChild.kind !== 'folder') {
+				break;
+			}
+			labels.push(onlyChild.label);
+			current = onlyChild;
+		}
+		return { label: labels.join('/'), tail: current };
 	}
 
 
@@ -369,19 +430,27 @@ export function activate(context: vscode.ExtensionContext) {
 	const provider = new ShScriptsProvider(expandedKeys, favoriteKeys, getExcludeGlobs, getIncludeExtensions);
 	const cachedScripts = context.workspaceState.get<string[]>(cachedScriptsKey, []);
 	const hasCachedScripts = cachedScripts.length > 0;
-	if (hasCachedScripts) {
-		provider.loadFromCachedPaths(cachedScripts);
-	}
 	const treeView = vscode.window.createTreeView('sh-explorer.scripts', {
 		treeDataProvider: provider,
 		showCollapseAll: false
 	});
 	let didRestoreSelection = false;
+	const applyCacheIfPossible = () => {
+		if (!hasCachedScripts) {
+			return false;
+		}
+		if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+			return false;
+		}
+		provider.loadFromCachedPaths(cachedScripts);
+		return true;
+	};
+
 	const restoreFromCache = async () => {
 		if (!hasCachedScripts) {
 			return;
 		}
-		provider.loadFromCachedPaths(cachedScripts);
+		applyCacheIfPossible();
 		didRestoreSelection = false;
 		await restoreSelection();
 	};
@@ -601,6 +670,9 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	const workspaceListener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+		if (!provider.hasRoots()) {
+			applyCacheIfPossible();
+		}
 		scheduleRestoreSelection();
 	});
 
@@ -612,6 +684,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const visibilityListener = treeView.onDidChangeVisibility((event) => {
 		if (event.visible) {
+			if (!provider.hasRoots()) {
+				applyCacheIfPossible();
+			}
 			if (!didRestoreSelection) {
 				void restoreSelection();
 			}
@@ -640,6 +715,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	};
 
+	applyCacheIfPossible();
 	if (treeView.visible && !didRestoreSelection) {
 		void restoreSelection();
 	}
