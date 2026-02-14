@@ -435,6 +435,12 @@ export function activate(context: vscode.ExtensionContext) {
 		showCollapseAll: false
 	});
 	let didRestoreSelection = false;
+	let hasUserInteractedWithTree = false;
+
+	const markUserInteraction = () => {
+		hasUserInteractedWithTree = true;
+		didRestoreSelection = true;
+	};
 	const applyCacheIfPossible = () => {
 		if (!hasCachedScripts) {
 			return false;
@@ -532,11 +538,13 @@ export function activate(context: vscode.ExtensionContext) {
 	};
 
 	const expandListener = treeView.onDidExpandElement((event) => {
+		markUserInteraction();
 		expandedKeys.add(event.element.node.key);
 		void saveExpandedState();
 	});
 
 	const collapseListener = treeView.onDidCollapseElement((event) => {
+		markUserInteraction();
 		expandedKeys.delete(event.element.node.key);
 		void saveExpandedState();
 	});
@@ -665,6 +673,7 @@ export function activate(context: vscode.ExtensionContext) {
 		if (!selected) {
 			return;
 		}
+		markUserInteraction();
 		void context.workspaceState.update(selectedStateKey, selected.node.key);
 		void context.globalState.update(selectedStateKey, selected.node.key);
 	});
@@ -687,7 +696,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!provider.hasRoots()) {
 				applyCacheIfPossible();
 			}
-			if (!didRestoreSelection) {
+			if (!didRestoreSelection && !hasUserInteractedWithTree) {
 				void restoreSelection();
 			}
 		}
