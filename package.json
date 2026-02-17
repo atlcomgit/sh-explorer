@@ -3,7 +3,7 @@
   "publisher": "alek-fiend",
   "displayName": "sh-explorer",
   "description": "Sh explorer in workspace",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "engines": {
     "vscode": "^1.108.0"
   },
@@ -68,6 +68,14 @@
         }
       },
       {
+        "command": "sh-explorer.copyFullPath",
+        "title": "Copy Full Path",
+        "icon": {
+          "light": "resources/copy.svg",
+          "dark": "resources/copy.svg"
+        }
+      },
+      {
         "command": "sh-explorer.toggleFavorite",
         "title": "Toggle Favorite",
         "icon": {
@@ -116,9 +124,15 @@
           "icon": "resources/open.svg"
         },
         {
-          "command": "sh-explorer.toggleFavorite",
+          "command": "sh-explorer.copyFullPath",
           "when": "view == sh-explorer.scripts && viewItem == sh-explorer.script",
           "group": "inline@3",
+          "icon": "resources/copy.svg"
+        },
+        {
+          "command": "sh-explorer.toggleFavorite",
+          "when": "view == sh-explorer.scripts && viewItem == sh-explorer.script",
+          "group": "inline@4",
           "icon": "resources/star.svg"
         }
       ]

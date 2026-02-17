@@ -653,6 +653,17 @@ export function activate(context: vscode.ExtensionContext) {
 		await vscode.window.showTextDocument(uri, { preview: false, preserveFocus: false });
 	});
 
+	const copyFullPathCommand = vscode.commands.registerCommand('sh-explorer.copyFullPath', async (arg?: unknown) => {
+		const uri = resolveScriptUri(arg);
+		if (!uri) {
+			vscode.window.showWarningMessage('No shell script selected.');
+			return;
+		}
+
+		await vscode.env.clipboard.writeText(uri.fsPath);
+		void vscode.window.setStatusBarMessage('Full path copied', 2000);
+	});
+
 	const toggleFavoriteCommand = vscode.commands.registerCommand('sh-explorer.toggleFavorite', (arg?: unknown) => {
 		const key = resolveScriptKey(arg);
 		if (!key) {
@@ -683,6 +694,7 @@ export function activate(context: vscode.ExtensionContext) {
 			applyCacheIfPossible();
 		}
 		scheduleRestoreSelection();
+		void refreshInBackground();
 	});
 
 	const configListener = vscode.workspace.onDidChangeConfiguration((event) => {
@@ -696,6 +708,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!provider.hasRoots()) {
 				applyCacheIfPossible();
 			}
+			void refreshInBackground();
 			if (!didRestoreSelection && !hasUserInteractedWithTree) {
 				void restoreSelection();
 			}
@@ -739,6 +752,7 @@ export function activate(context: vscode.ExtensionContext) {
 		refreshCommand,
 		runCommand,
 		openCommand,
+		copyFullPathCommand,
 		toggleFavoriteCommand,
 		closeListener,
 		expandListener,
