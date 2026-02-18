@@ -605,14 +605,22 @@ export function activate(context: vscode.ExtensionContext) {
 		return key;
 	};
 
-	const refreshCommand = vscode.commands.registerCommand('sh-explorer.refresh', async () => {
-		treeView.message = 'Обновление...';
+	const refreshInBackground = async (showMessage = false) => {
+		if (showMessage) {
+			treeView.message = 'Обновление...';
+		}
 		try {
 			const paths = await provider.loadFromWorkspace();
 			await context.workspaceState.update(cachedScriptsKey, paths);
 		} finally {
-			treeView.message = undefined;
+			if (showMessage) {
+				treeView.message = undefined;
+			}
 		}
+	};
+
+	const refreshCommand = vscode.commands.registerCommand('sh-explorer.refresh', async () => {
+		await refreshInBackground(true);
 	});
 
 	const runCommand = vscode.commands.registerCommand('sh-explorer.runScript', async (arg?: unknown) => {
@@ -725,16 +733,6 @@ export function activate(context: vscode.ExtensionContext) {
 				scheduleRestoreSelection(attempt + 1);
 			}
 		}, attempt === 0 ? 0 : 500);
-	};
-
-	const refreshInBackground = async () => {
-		treeView.message = 'Обновление...';
-		try {
-			const paths = await provider.loadFromWorkspace();
-			await context.workspaceState.update(cachedScriptsKey, paths);
-		} finally {
-			treeView.message = undefined;
-		}
 	};
 
 	applyCacheIfPossible();
