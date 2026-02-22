@@ -3,7 +3,7 @@
   "publisher": "alek-fiend",
   "displayName": "sh-explorer",
   "description": "Sh explorer in workspace",
-  "version": "0.0.15",
+  "version": "0.0.18",
   "engines": {
     "vscode": "^1.108.0"
   },
@@ -97,6 +97,7 @@
         {
           "id": "sh-explorer.scripts",
           "name": "Sh Explorer",
+          "type": "webview",
           "icon": "resources/sh.svg"
         }
       ]
@@ -153,18 +154,19 @@
     "test": "vscode-test"
   },
   "dependencies": {
+    "@vscode/codicons": "^0.0.44",
     "minimatch": "^9.0.5"
   },
   "devDependencies": {
-    "@types/vscode": "^1.108.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.52.0",
-    "eslint": "^9.39.2",
+    "@types/vscode": "^1.108.1",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.27.2",
+    "eslint": "^9.39.2",
     "npm-run-all": "^4.1.5",
     "typescript": "^5.9.3",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "typescript-eslint": "^8.52.0"
   }
 }
