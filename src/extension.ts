@@ -822,7 +822,7 @@ body{margin:0;padding:0;font-family:var(--vscode-font-family);font-size:var(--vs
 .kids-static{}
 .indent{display:flex;align-items:center;flex-shrink:0}
 /* Вертикальная линия папок */
-.indent-guide{width:8px;height:22px;border-right:1px solid var(--vscode-tree-indentGuidesStroke,rgba(128,128,128,.15));opacity:.2}
+.indent-guide{width:21px;height:22px;border-right:1px solid var(--vscode-tree-indentGuidesStroke,rgba(128,128,128,.15));opacity:.2}
 .arrow{display:flex;align-items:center;justify-content:center;width:16px;height:22px;flex-shrink:0;color:var(--vscode-icon-foreground);opacity:.8}
 .arrow.leaf{pointer-events:none}
 .ico{display:flex;align-items:center;flex-shrink:0;margin-right:5px}

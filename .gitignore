@@ -4,3 +4,7 @@ node_modules
 dist
 .github
 .env
+
+# Prompt Manager memory database
+memory.db
+*.db-backup
