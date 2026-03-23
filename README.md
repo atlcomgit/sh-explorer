@@ -6,11 +6,12 @@ Shell scripts explorer for VS Code.
 
 - Scans the workspace for script files on activation.
 - Shows scripts in the Explorer sidebar under “Shell Scripts”.
-- Run any script via click or the inline run action; it opens a terminal in the editor area and executes the script.
+- Run scripts via click or the inline run action; `.sh`-like files are executed with Bash, `.bat` and `.cmd` use `cmd.exe` on Windows.
 
 ## Requirements
 
-- Bash available on your system.
+- Bash available on your system for Unix shell scripts.
+- Windows batch files (`.bat`, `.cmd`) are only supported on Windows.
 
 ## Extension Settings
 

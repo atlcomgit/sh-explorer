@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { minimatch } from 'minimatch';
+import { buildScriptExecutionPlan } from './scriptRunner';
 
 type ScriptNodeKind = 'workspace' | 'folder' | 'file';
 
@@ -709,6 +710,11 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showWarningMessage('No shell script selected.');
 			return;
 		}
+		const plan = buildScriptExecutionPlan(node.uri.fsPath, process.platform, process.env.COMSPEC);
+		if (!plan.ok) {
+			vscode.window.showErrorMessage(plan.message);
+			return;
+		}
 		const folder = vscode.workspace.getWorkspaceFolder(node.uri);
 		const cwd = folder?.uri.fsPath;
 		let terminal = runTerminals.get(node.key);
@@ -716,14 +722,16 @@ export function activate(context: vscode.ExtensionContext) {
 			terminal = vscode.window.createTerminal({
 				name: `${terminalNamePrefix}: ${path.basename(node.uri.fsPath)}`,
 				cwd,
-				location: vscode.TerminalLocation.Editor
+				location: vscode.TerminalLocation.Editor,
+				shellPath: plan.shellPath,
+				shellArgs: plan.shellArgs
 			});
 			runTerminals.set(node.key, terminal);
 		} else if (cwd) {
 			terminal.sendText(`cd "${cwd}"`);
 		}
 		terminal.show(true);
-		terminal.sendText(`bash "${node.uri.fsPath}"`);
+		terminal.sendText(plan.command);
 		// Track recent runs (most-recent-first, deduplicated, max 10)
 		recentRuns = [node.key, ...recentRuns.filter((k) => k !== node.key)].slice(0, 10);
 		void context.globalState.update(recentRunsKey, recentRuns);

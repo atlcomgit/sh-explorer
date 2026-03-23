@@ -8,3 +8,5 @@ dist
 # Prompt Manager memory database
 memory.db
 *.db-backup
+.vscode-test
+out

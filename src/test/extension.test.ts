@@ -1,15 +1,33 @@
 import * as assert from 'assert';
-
-// You can import and use all API from the 'vscode' module
-// as well as import your extension to test it
-import * as vscode from 'vscode';
-// import * as myExtension from '../../extension';
+import { buildScriptExecutionPlan } from '../scriptRunner';
 
 suite('Extension Test Suite', () => {
-	vscode.window.showInformationMessage('Start all tests.');
+	test('uses bash with safe quoting for shell scripts', () => {
+		const plan = buildScriptExecutionPlan("/tmp/it's fine.sh", 'linux', undefined);
 
-	test('Sample test', () => {
-		assert.strictEqual(-1, [1, 2, 3].indexOf(5));
-		assert.strictEqual(-1, [1, 2, 3].indexOf(0));
+		assert.deepStrictEqual(plan, {
+			ok: true,
+			command: "bash '/tmp/it'\\''s fine.sh'"
+		});
+	});
+
+	test('uses cmd for batch scripts on windows', () => {
+		const plan = buildScriptExecutionPlan('C:\\temp\\run me.cmd', 'win32', 'C:\\Windows\\System32\\cmd.exe');
+
+		assert.deepStrictEqual(plan, {
+			ok: true,
+			command: '"C:\\temp\\run me.cmd"',
+			shellPath: 'C:\\Windows\\System32\\cmd.exe',
+			shellArgs: ['/d']
+		});
+	});
+
+	test('returns a clear error for batch scripts outside windows', () => {
+		const plan = buildScriptExecutionPlan('/tmp/run.cmd', 'linux', undefined);
+
+		assert.deepStrictEqual(plan, {
+			ok: false,
+			message: 'Scripts with .bat and .cmd can only be run on Windows.'
+		});
 	});
 });
