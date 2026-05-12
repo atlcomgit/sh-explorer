@@ -20,10 +20,15 @@ const quoteForCmd = (value: string): string => {
 	return `"${value}"`;
 };
 
+const buildLinuxSystemdRunCommand = (scriptPath: string): string => {
+	return `systemd-run --user --wait --pty --same-dir --collect --quiet bash ${quoteForPosixShell(scriptPath)}`;
+};
+
 export const buildScriptExecutionPlan = (
 	scriptPath: string,
 	platform: NodeJS.Platform,
-	comspec = process.env.COMSPEC
+	comspec = process.env.COMSPEC,
+	useSystemdRunForLinuxScripts = false
 ): ScriptExecutionPlan | ScriptExecutionError => {
 	const extension = path.extname(scriptPath).toLowerCase();
 
@@ -40,6 +45,13 @@ export const buildScriptExecutionPlan = (
 			command: quoteForCmd(scriptPath),
 			shellPath: comspec && comspec.trim().length > 0 ? comspec : 'cmd.exe',
 			shellArgs: ['/d']
+		};
+	}
+
+	if (platform === 'linux' && useSystemdRunForLinuxScripts) {
+		return {
+			ok: true,
+			command: buildLinuxSystemdRunCommand(scriptPath)
 		};
 	}
 

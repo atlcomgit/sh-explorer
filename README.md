@@ -11,6 +11,7 @@ Shell scripts explorer for VS Code.
 ## Requirements
 
 - Bash available on your system for Unix shell scripts.
+- On Linux, `systemd-run` is used automatically when available so scripts can still use `sudo` under recent VS Code sandboxing changes.
 - Windows batch files (`.bat`, `.cmd`) are only supported on Windows.
 
 ## Extension Settings

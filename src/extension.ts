@@ -1,7 +1,9 @@
+import { spawnSync } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { minimatch } from 'minimatch';
 import { buildScriptExecutionPlan } from './scriptRunner';
+import { buildWebviewTree, type TreePresentationInputNode } from './webviewTree';
 
 type ScriptNodeKind = 'workspace' | 'folder' | 'file';
 
@@ -641,7 +643,7 @@ export function activate(context: vscode.ExtensionContext) {
 		return refreshChain;
 	};
 
-	const serialize = (node: ScriptNode): { kind: ScriptNodeKind; label: string; key: string; path?: string; children: unknown[] } => {
+	const serialize = (node: ScriptNode): TreePresentationInputNode => {
 		const children = Array.from(node.children.values())
 			.sort((a, b) => {
 				if (a.kind === b.kind) {
@@ -671,7 +673,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 		webviewView.webview.postMessage({
 			type: 'state',
-			roots: roots.map((entry) => serialize(entry)),
+			roots: buildWebviewTree(roots.map((entry) => serialize(entry))),
 			expandedKeys: Array.from(expandedKeys),
 			favoriteKeys: Array.from(favoriteKeys),
 			recentKeys: recentRuns,
@@ -703,6 +705,17 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const terminalNamePrefix = 'SH Run';
 	const runTerminals = new Map<string, vscode.Terminal>();
+	const canUseSystemdRunForLinuxScripts = (() => {
+		if (process.platform !== 'linux') {
+			return false;
+		}
+
+		const probe = spawnSync('systemd-run', ['--user', '--wait', '--pipe', 'true'], {
+			stdio: 'ignore'
+		});
+
+		return probe.status === 0 && !probe.error;
+	})();
 
 	const runScriptByKey = (raw?: string) => {
 		const node = resolveNodeByKey(raw ?? selectedKey);
@@ -710,7 +723,12 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showWarningMessage('No shell script selected.');
 			return;
 		}
-		const plan = buildScriptExecutionPlan(node.uri.fsPath, process.platform, process.env.COMSPEC);
+		const plan = buildScriptExecutionPlan(
+			node.uri.fsPath,
+			process.platform,
+			process.env.COMSPEC,
+			canUseSystemdRunForLinuxScripts
+		);
 		if (!plan.ok) {
 			vscode.window.showErrorMessage(plan.message);
 			return;
@@ -900,6 +918,7 @@ window.addEventListener('resize',updateLayout);
 updateLayout();
 const state={roots:[],expanded:new Set(),favorites:new Set(),selected:undefined,scrollTop:0,
   favFilter:false,recentFilter:false,recentKeys:[],searchQuery:''};
+let renderedRoots=[];
 let persistTimer;
 const esc=(v)=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const persist=()=>{clearTimeout(persistTimer);persistTimer=setTimeout(()=>vscode.postMessage({type:'persistState',expandedKeys:[...state.expanded],selectedKey:state.selected,scrollTop:treeEl.scrollTop}),150)};
@@ -919,7 +938,7 @@ recentBtnEl.addEventListener('click',()=>{
   render();
 });
 document.getElementById('expandAllBtn').addEventListener('click',()=>{
-  const addAll=(nodes)=>nodes.forEach(n=>{if(n.kind!=='file'){state.expanded.add(n.key);addAll(n.children||[]);}});
+	const addAll=(nodes)=>nodes.forEach(n=>{if(n.kind!=='file'){(n.branchKeys||[]).forEach(k=>state.expanded.add(k));addAll(n.children||[]);}});
   addAll(state.roots); render(); persist();
 });
 document.getElementById('collapseAllBtn').addEventListener('click',()=>{
@@ -935,24 +954,6 @@ searchClear.addEventListener('click',()=>{
   searchClear.style.display='none';
   searchInput.focus(); render();
 });
-const compact=(node)=>{
-  if(node.kind==='file') return {...node,_rawLabel:node.label};
-  if(node.kind==='folder'){
-    let cur=node;
-    const parts=[cur.label];
-    let key=cur.key,nodePath=cur.path;
-    while(cur.children&&cur.children.length===1&&cur.children[0].kind==='folder'){
-      cur=cur.children[0]; parts.push(cur.label); key=cur.key; nodePath=cur.path;
-    }
-    const kids=(cur.children||[]).map(compact);
-    let label;
-    if(parts.length>1){
-      label='<span class="dim">'+esc(parts.slice(0,-1).join('/'))+'</span>/'+esc(parts[parts.length-1]);
-    } else { label=esc(node.label); }
-    return {kind:node.kind,label,key,path:nodePath,children:kids,_raw:node.key,_compactedKey:key,_multiLabel:parts.length>1,_rawLabel:parts.join('/')};
-  }
-  return {...node,_rawLabel:node.label,children:(node.children||[]).map(compact)};
-};
 const subtreeCount=(n)=>n.kind==='file'?1:(n.children||[]).reduce((s,c)=>s+subtreeCount(c),0);
 const filesCount=(nodes)=>nodes.reduce((s,n)=>s+(n.kind==='file'?1:0)+filesCount(n.children||[]),0);
 const fileIcoHtml=(rawLabel,isFav,isRecent)=>{
@@ -970,13 +971,28 @@ const highlight=(text,q)=>{
   if(li<0) return esc(text);
   return esc(text.slice(0,li))+'<span class="match">'+esc(text.slice(li,li+q.length))+'</span>'+esc(text.slice(li+q.length));
 };
+const findNodeByKey=(nodes,key)=>{
+	for(const node of nodes){
+		if(node.key===key) return node;
+		const nested=findNodeByKey(node.children||[],key);
+		if(nested) return nested;
+	}
+	return undefined;
+};
+const clearExpandedBranch=(node)=>{
+	for(const key of node.branchKeys||[]) state.expanded.delete(key);
+};
+const isNodeExpanded=(node,forceExpand)=>{
+	if(forceExpand) return true;
+	return (node.branchKeys||[]).some(key=>state.expanded.has(key));
+};
 const nodeHtml=(node,depth,forceExpand,searchQ)=>{
   const isFolder=node.kind!=='file';
-  const isExpanded=forceExpand||state.expanded.has(node.key)||state.expanded.has(node._compactedKey);
-  const isFav=state.favorites.has(node.key)||state.favorites.has(node._compactedKey);
-  const isRecent=!isFav&&state.recentKeys.includes(node.key);
+	const isExpanded=isNodeExpanded(node,forceExpand);
+	const isFav=(node.aliases||[]).some(key=>state.favorites.has(key));
+	const isRecent=!isFav&&(node.aliases||[]).some(key=>state.recentKeys.includes(key));
   const hasKids=(node.children||[]).length>0;
-  const isSel=node.key===state.selected||node._compactedKey===state.selected||(node._raw&&node._raw===state.selected);
+	const isSel=typeof state.selected==='string'&&(node.aliases||[]).includes(state.selected);
   let indentHtml='';
   for(let i=0;i<depth;i++) indentHtml+='<div class="indent-guide"></div>';
   let arrowHtml;
@@ -993,11 +1009,11 @@ const nodeHtml=(node,depth,forceExpand,searchQ)=>{
     const fi=isExpanded?'codicon-folder-opened':'codicon-folder';
     icoHtml='<div class="ico folder-ico"><span class="codicon '+fi+'"></span></div>';
   } else {
-    icoHtml=fileIcoHtml(node._rawLabel||node.label,isFav,isRecent);
+		icoHtml=fileIcoHtml(node.rawLabel||node.label,isFav,isRecent);
   }
-  const rawL=node._rawLabel||node.label;
+	const rawL=node.rawLabel||node.label;
   let labelText;
-  if(node._multiLabel){
+	if(node.multiLabel){
     const parts=rawL.split('/');
     const last=parts[parts.length-1];
     const prefix=parts.slice(0,-1).join('/');
@@ -1024,7 +1040,7 @@ const nodeHtml=(node,depth,forceExpand,searchQ)=>{
   html+='<div class="label'+(isFav?' fav':'')+'"'+(isRecent&&!isFav?' style="color:green;opacity:.9"':'')+'>'+labelText+'</div>';
   html+=badgeHtml+'<div class="actions">'+actHtml+'</div></div>';
   if(isFolder&&hasKids&&isExpanded){
-    const kCls=(node.key===justExpandedKey||node._compactedKey===justExpandedKey)?'kids':'kids-static';
+		const kCls=node.key===justExpandedKey?'kids':'kids-static';
     html+='<div class="'+kCls+'">'+(node.children||[]).map(c=>nodeHtml(c,depth+1,forceExpand,searchQ)).join('')+'</div>';
   }
   return html;
@@ -1074,13 +1090,14 @@ const render=()=>{
     label='Недавние: '+state.recentKeys.length;
     if(!state.recentKeys.length){treeEl.innerHTML='<div style="padding:16px 12px;opacity:.6;font-size:12px">Нет недавно запущенных скриптов.</div>';countEl.textContent=label;return;}
   }
-  let compacted=base.map(compact);
-  if(searchQ) compacted=filterSearch(compacted,searchQ);
-  if(!compacted.length){
+	let visible=base;
+	if(searchQ) visible=filterSearch(visible,searchQ);
+	renderedRoots=visible;
+	if(!visible.length){
     treeEl.innerHTML='<div style="padding:16px 12px;opacity:.6;font-size:12px">'+(searchQ?'Ничего не найдено.':'Скрипты не найдены.')+'</div>';
     countEl.textContent=label; return;
   }
-  treeEl.innerHTML=compacted.map(n=>nodeHtml(n,0,forceExpand,searchQ)).join('');
+	treeEl.innerHTML=visible.map(n=>nodeHtml(n,0,forceExpand,searchQ)).join('');
   if(!label) label=filesCount(state.roots)+' файлов';
   countEl.textContent=label;
   if(!forceExpand) requestAnimationFrame(()=>{treeEl.scrollTop=state.scrollTop||0;});
@@ -1091,7 +1108,13 @@ treeEl.addEventListener('click',(e)=>{
   const a=t.dataset.a;
   const k=t.dataset.k||(t.closest('[data-k]')?.dataset.k);
   if(!k) return;
-  if(a==='toggle'){const exp=!state.expanded.has(k);exp?state.expanded.add(k):state.expanded.delete(k);justExpandedKey=exp?k:null;render();justExpandedKey=null;persist();return;}
+	if(a==='toggle'){
+		const node=findNodeByKey(renderedRoots,k)||findNodeByKey(state.roots,k);
+		if(!node||node.kind==='file') return;
+		const exp=!isNodeExpanded(node,false);
+		if(exp) state.expanded.add(k); else clearExpandedBranch(node);
+		justExpandedKey=exp?k:null;render();justExpandedKey=null;persist();return;
+	}
   if(a==='run'){vscode.postMessage({type:'run',key:k});return;}
   if(a==='open'){vscode.postMessage({type:'open',key:k});return;}
   if(a==='copy'){vscode.postMessage({type:'copy',key:k});return;}
@@ -1118,9 +1141,25 @@ treeEl.addEventListener('keydown',(e)=>{
   else if(e.key==='ArrowUp'){e.preventDefault();const prev=rows[Math.max(idx-1,0)];if(prev){state.selected=prev.dataset.k;setSelectedInDom(prev.dataset.k);prev.scrollIntoView({block:'nearest'});persist();}}
   else if(e.key==='Enter'&&cur){vscode.postMessage({type:'run',key:cur.dataset.k});}
   else if(e.key==='F2'&&cur){vscode.postMessage({type:'open',key:cur.dataset.k});}
-  else if(e.key===' '&&cur){e.preventDefault();const k=cur.dataset.k;const exp=!state.expanded.has(k);exp?state.expanded.add(k):state.expanded.delete(k);justExpandedKey=exp?k:null;render();justExpandedKey=null;persist();}
-  else if(e.key==='ArrowRight'&&cur){const k=cur.dataset.k;if(!state.expanded.has(k)){state.expanded.add(k);justExpandedKey=k;render();justExpandedKey=null;persist();}}
-  else if(e.key==='ArrowLeft'&&cur){const k=cur.dataset.k;if(state.expanded.has(k)){state.expanded.delete(k);render();persist();}}
+	else if(e.key===' '&&cur){
+		e.preventDefault();
+		const k=cur.dataset.k;
+		const node=findNodeByKey(renderedRoots,k)||findNodeByKey(state.roots,k);
+		if(!node||node.kind==='file') return;
+		const exp=!isNodeExpanded(node,false);
+		if(exp) state.expanded.add(k); else clearExpandedBranch(node);
+		justExpandedKey=exp?k:null;render();justExpandedKey=null;persist();
+	}
+	else if(e.key==='ArrowRight'&&cur){
+		const k=cur.dataset.k;
+		const node=findNodeByKey(renderedRoots,k)||findNodeByKey(state.roots,k);
+		if(node&&node.kind!=='file'&&!isNodeExpanded(node,false)){state.expanded.add(k);justExpandedKey=k;render();justExpandedKey=null;persist();}
+	}
+	else if(e.key==='ArrowLeft'&&cur){
+		const k=cur.dataset.k;
+		const node=findNodeByKey(renderedRoots,k)||findNodeByKey(state.roots,k);
+		if(node&&node.kind!=='file'&&isNodeExpanded(node,false)){clearExpandedBranch(node);render();persist();}
+	}
 });
 const ctxEl=document.getElementById('ctx');
 let ctxKey=null;
