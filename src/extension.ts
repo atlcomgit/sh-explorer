@@ -2,6 +2,14 @@ import { spawnSync } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { minimatch } from 'minimatch';
+import {
+	mergeFavoriteRecords,
+	migrateLegacyFavoriteKeys,
+	resolveFavoriteRecords,
+	toggleFavoriteRecord,
+	type FavoriteNodeMatch,
+	type FavoriteRecord
+} from './favoritesState';
 import { buildScriptExecutionPlan } from './scriptRunner';
 import { buildWebviewTree, type TreePresentationInputNode } from './webviewTree';
 
@@ -397,6 +405,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const scrollTopStateKey = 'sh-explorer.scrollTop';
 	const cachedScriptsKey = 'sh-explorer.cachedScripts';
 	const favoritesKey = 'sh-explorer.favorites';
+	const favoriteRecordsKey = 'sh-explorer.favoriteRecords';
 	const recentRunsKey = 'sh-explorer.recentRuns';
 
 	const normalizeRootKey = (rawRootKey: string): string => {
@@ -415,6 +424,31 @@ export function activate(context: vscode.ExtensionContext) {
 		const rawRootKey = key.slice(0, separatorIndex);
 		const rest = key.slice(separatorIndex);
 		return `${normalizeRootKey(rawRootKey)}${rest}`;
+	};
+
+	const collectChangedFavoriteRecordPaths = (
+		previousRecords: readonly FavoriteRecord[],
+		nextRecords: readonly FavoriteRecord[]
+	): Set<string> => {
+		const previousByFilePath = new Map<string, string>();
+		for (const record of mergeFavoriteRecords(previousRecords)) {
+			previousByFilePath.set(record.filePath, record.preferredRoot);
+		}
+
+		const nextByFilePath = new Map<string, string>();
+		for (const record of mergeFavoriteRecords(nextRecords)) {
+			nextByFilePath.set(record.filePath, record.preferredRoot);
+		}
+
+		const changedPaths = new Set<string>();
+		const allFilePaths = new Set([...previousByFilePath.keys(), ...nextByFilePath.keys()]);
+		for (const filePath of allFilePaths) {
+			if (previousByFilePath.get(filePath) !== nextByFilePath.get(filePath)) {
+				changedPaths.add(filePath);
+			}
+		}
+
+		return changedPaths;
 	};
 
 	const getExcludeGlobs = (): string[] => {
@@ -446,9 +480,13 @@ export function activate(context: vscode.ExtensionContext) {
 	let expandedKeys = new Set<string>(
 		context.workspaceState.get<string[]>(expandedStateKey, []).map(normalizeKey)
 	);
-	const favoriteKeys = new Set<string>(
-		context.workspaceState.get<string[]>(favoritesKey, []).map(normalizeKey)
-	);
+	const legacyFavoriteKeys = context.workspaceState.get<string[]>(favoritesKey, []).map(normalizeKey);
+	const legacyFavoriteRecords = migrateLegacyFavoriteKeys(legacyFavoriteKeys);
+	const storedFavoriteRecords = context.globalState.get<FavoriteRecord[] | undefined>(favoriteRecordsKey);
+	let favoriteRecords = mergeFavoriteRecords(storedFavoriteRecords ?? [], legacyFavoriteRecords);
+	const pendingFavoriteRecordPaths = collectChangedFavoriteRecordPaths(storedFavoriteRecords ?? [], favoriteRecords);
+	let shouldPersistFavoriteRecords = pendingFavoriteRecordPaths.size > 0;
+	const favoriteKeys = new Set<string>();
 	let selectedKey = context.workspaceState.get<string | undefined>(selectedStateKey);
 	if (selectedKey) {
 		selectedKey = normalizeKey(selectedKey);
@@ -461,6 +499,13 @@ export function activate(context: vscode.ExtensionContext) {
 	let refreshChain: Promise<string[]> = Promise.resolve([]);
 	let refreshToken = 0;
 	let webviewView: vscode.WebviewView | undefined;
+
+	const queueFavoriteRecordPaths = (paths: Iterable<string>) => {
+		for (const filePath of paths) {
+			pendingFavoriteRecordPaths.add(path.resolve(filePath));
+		}
+		shouldPersistFavoriteRecords = pendingFavoriteRecordPaths.size > 0;
+	};
 
 	const getNormalizedExtensions = (): string[] => {
 		return getIncludeExtensions()
@@ -581,13 +626,45 @@ export function activate(context: vscode.ExtensionContext) {
 		return rootNodes;
 	};
 
+	const getRootNode = (node: ScriptNode): ScriptNode => {
+		let current = node;
+		while (current.parent) {
+			current = current.parent;
+		}
+		return current;
+	};
+
+	const collectFavoriteNodeMatches = (): FavoriteNodeMatch[] => {
+		const matches: FavoriteNodeMatch[] = [];
+		nodeIndex.forEach((node) => {
+			if (node.kind !== 'file' || !node.uri) {
+				return;
+			}
+
+			matches.push({
+				key: node.key,
+				filePath: node.uri.fsPath,
+				rootPath: getRootNode(node).key
+			});
+		});
+		return matches;
+	};
+
+	const syncFavoriteStateAgainstTree = (): Set<string> => {
+		const previousFavoriteRecords = favoriteRecords;
+		const resolvedFavorites = resolveFavoriteRecords(favoriteRecords, collectFavoriteNodeMatches());
+		favoriteRecords = resolvedFavorites.records;
+		favoriteKeys.clear();
+		for (const key of resolvedFavorites.favoriteKeys) {
+			favoriteKeys.add(key);
+		}
+		return resolvedFavorites.didChange
+			? collectChangedFavoriteRecordPaths(previousFavoriteRecords, favoriteRecords)
+			: new Set<string>();
+	};
+
 	const sanitizeStateAgainstTree = () => {
 		expandedKeys = new Set(Array.from(expandedKeys).filter((key) => nodeIndex.has(key)));
-		favoriteKeys.forEach((key) => {
-			if (!nodeIndex.has(key)) {
-				favoriteKeys.delete(key);
-			}
-		});
 		if (selectedKey && !nodeIndex.has(selectedKey)) {
 			selectedKey = undefined;
 		}
@@ -598,6 +675,7 @@ export function activate(context: vscode.ExtensionContext) {
 		if (!folders || folders.length === 0) {
 			roots = [];
 			nodeIndex.clear();
+			favoriteKeys.clear();
 			return;
 		}
 		const patterns = getNormalizedExcludeGlobs();
@@ -608,6 +686,10 @@ export function activate(context: vscode.ExtensionContext) {
 			.filter((uri) => !isExcluded(uri, patterns));
 		roots = buildTreeFromUris(uris, folders);
 		sanitizeStateAgainstTree();
+		queueFavoriteRecordPaths(syncFavoriteStateAgainstTree());
+		if (pendingFavoriteRecordPaths.size > 0) {
+			void saveFavoriteRecords(new Set(pendingFavoriteRecordPaths));
+		}
 	};
 
 	const loadFromWorkspace = async (): Promise<string[]> => {
@@ -618,6 +700,7 @@ export function activate(context: vscode.ExtensionContext) {
 				if (token === refreshToken) {
 					roots = [];
 					nodeIndex.clear();
+					favoriteKeys.clear();
 				}
 				return [];
 			}
@@ -628,6 +711,7 @@ export function activate(context: vscode.ExtensionContext) {
 				if (token === refreshToken) {
 					roots = [];
 					nodeIndex.clear();
+					favoriteKeys.clear();
 				}
 				return [];
 			}
@@ -637,6 +721,10 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			roots = buildTreeFromUris(files, folders);
 			sanitizeStateAgainstTree();
+			queueFavoriteRecordPaths(syncFavoriteStateAgainstTree());
+			if (pendingFavoriteRecordPaths.size > 0) {
+				await saveFavoriteRecords(new Set(pendingFavoriteRecordPaths));
+			}
 			return files.map((entry) => entry.fsPath);
 		};
 		refreshChain = refreshChain.then(task, task);
@@ -692,8 +780,39 @@ export function activate(context: vscode.ExtensionContext) {
 	const saveScrollTop = async () => {
 		await context.workspaceState.update(scrollTopStateKey, scrollTop);
 	};
-	const saveFavorites = async () => {
-		await context.workspaceState.update(favoritesKey, Array.from(favoriteKeys));
+	const saveFavoriteRecords = async (pathsToSave: ReadonlySet<string>) => {
+		if (pathsToSave.size === 0) {
+			shouldPersistFavoriteRecords = pendingFavoriteRecordPaths.size > 0;
+			return;
+		}
+
+		const latestStoredRecords = mergeFavoriteRecords(
+			context.globalState.get<FavoriteRecord[]>(favoriteRecordsKey, [])
+		);
+		const latestByFilePath = new Map<string, FavoriteRecord>();
+		for (const record of latestStoredRecords) {
+			latestByFilePath.set(record.filePath, record);
+		}
+
+		const currentByFilePath = new Map<string, FavoriteRecord>();
+		for (const record of mergeFavoriteRecords(favoriteRecords)) {
+			currentByFilePath.set(record.filePath, record);
+		}
+
+		for (const filePath of pathsToSave) {
+			const normalizedFilePath = path.resolve(filePath);
+			const currentRecord = currentByFilePath.get(normalizedFilePath);
+			if (currentRecord) {
+				latestByFilePath.set(normalizedFilePath, currentRecord);
+			} else {
+				latestByFilePath.delete(normalizedFilePath);
+			}
+			pendingFavoriteRecordPaths.delete(normalizedFilePath);
+		}
+
+		favoriteRecords = mergeFavoriteRecords(Array.from(latestByFilePath.values()));
+		shouldPersistFavoriteRecords = pendingFavoriteRecordPaths.size > 0;
+		await context.globalState.update(favoriteRecordsKey, favoriteRecords);
 	};
 
 	const resolveNodeByKey = (raw?: string): ScriptNode | undefined => {
@@ -777,16 +896,18 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const toggleFavoriteByKey = async (raw?: string) => {
 		const node = resolveNodeByKey(raw ?? selectedKey);
-		if (!node || node.kind !== 'file') {
+		if (!node || node.kind !== 'file' || !node.uri) {
 			vscode.window.showWarningMessage('No shell script selected.');
 			return;
 		}
-		if (favoriteKeys.has(node.key)) {
-			favoriteKeys.delete(node.key);
-		} else {
-			favoriteKeys.add(node.key);
-		}
-		await saveFavorites();
+		favoriteRecords = toggleFavoriteRecord(favoriteRecords, {
+			key: node.key,
+			filePath: node.uri.fsPath,
+			rootPath: getRootNode(node).key
+		});
+		queueFavoriteRecordPaths([node.uri.fsPath]);
+		queueFavoriteRecordPaths(syncFavoriteStateAgainstTree());
+		await saveFavoriteRecords(new Set(pendingFavoriteRecordPaths));
 		postState();
 	};
 
